@@ -2,12 +2,14 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from sklearn.neighbors import NearestNeighbors
+from torch.autograd import Variable
+
 import numpy as np
 
 
 
 class TransRec(nn.Module):
-    def __init__(self, embedding_dim, user2id, id2user, poi2id, id2poi):
+    def __init__(self, embedding_dim, user2id, id2user, poi2id, id2poi, cuda=False):
         super(TransRec, self).__init__()
 
         self.user2id = user2id
@@ -24,6 +26,17 @@ class TransRec(nn.Module):
         self.poi_bias = nn.Embedding(self.n_poi, 1)                                 # 4
         self.init_weights()
         self.first_prediction = True
+
+        self.cuda = cuda
+        if self.cuda:
+            self.float_one = Variable(torch.cuda.FloatTensor([1.]))
+            self.int_zero = Variable(torch.cuda.LongTensor([0]))
+            self.float_zero = Variable(torch.cuda.FloatTensor([0.]))
+        else:
+            self.float_one = torch.FloatTensor([1.])
+            self.int_zero = torch.LongTensor([0])
+            self.float_zero = torch.FloatTensor([0.])
+
     def init_weights(self):
         self.poi_embedding.weight.data = F.normalize(self.poi_embedding.weight.data)                        # 1
         self.user_embedding.weight.data.zero_()                                                             # 2
@@ -48,11 +61,11 @@ class TransRec(nn.Module):
 
         objective = (pos_probability - neg_probability).squeeze()           # [batch_size]
         # normalizing =====================
-        self.poi_embedding.weight.data[prev_id]/= torch.maximum(torch.FloatTensor([1]),
+        self.poi_embedding.weight.data[prev_id]/= torch.maximum(self.float_one,
                                                 self.poi_embedding.weight.data[prev_id].norm(dim=1, keepdim=True))
-        self.poi_embedding.weight.data[pos_id]/= torch.maximum(torch.FloatTensor([1]),
+        self.poi_embedding.weight.data[pos_id]/= torch.maximum(self.float_one,
                                                 self.poi_embedding.weight.data[pos_id].norm(dim=1, keepdim=True))
-        self.poi_embedding.weight.data[neg_id]/= torch.maximum(torch.FloatTensor([1]),
+        self.poi_embedding.weight.data[neg_id]/= torch.maximum(self.float_one,
                                                 self.poi_embedding.weight.data[neg_id].norm(dim=1, keepdim=True))
         # [batch_size x embedding_dim]
         # =================================
@@ -69,12 +82,10 @@ class TransRec(nn.Module):
             self.KNN = NearestNeighbors(n_neighbors=50, algorithm='ball_tree')
             self.KNN.fit(self.poi_vectors)
             self.first_prediction = False
-        int_zero = torch.LongTensor([0])
-        float_zero = torch.FloatTensor([[0.]])
         translation = (self.poi_embedding(pre_poi) +
                        self.user_embedding(user_id) +
-                       self.user_global_embedding(int_zero))
-        translation = torch.cat((translation,float_zero), 1).detach().numpy()
+                       self.user_global_embedding(self.int_zero))
+        translation = torch.cat((translation,self.float_zero), 1).detach().numpy()
 
         _, indices = self.KNN.kneighbors(translation)
         indices = indices[0]
